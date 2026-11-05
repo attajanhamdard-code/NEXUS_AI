@@ -1,0 +1,8 @@
+streamlit
+plotly
+pandas
+numpy
+yfinance
+scikit-learn
+ta
+MetaTrader5
