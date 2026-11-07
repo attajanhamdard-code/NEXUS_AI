@@ -7,34 +7,22 @@ from plotly.subplots import make_subplots
 import requests
 
 # ============================================================
-# NEXUS AI
-# Educational research and historical paper simulation only.
-# No broker connection. No live orders. No financial advice.
+# NEXUS AI - FULL SYSTEM (Engines 1-6 + Telegram Alerts)
 # ============================================================
 
-st.set_page_config(
-    page_title="NEXUS AI",
-    page_icon="📊",
-    layout="wide"
-)
+st.set_page_config(page_title="NEXUS AI", page_icon="📊", layout="wide")
 
-# ============================================================
 # 🟢 TELEGRAM ALERT SETTINGS
-# ============================================================
 TELEGRAM_BOT_TOKEN = "9068532808:AAG0gZcP1V7Ebo0wQm_YWxvTzyoVuLBiKrM"
 TELEGRAM_CHAT_ID = "6382027867"
 
 def send_telegram_alert(message):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": message,
-            "parse_mode": "Markdown"
-        }
+        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
         requests.post(url, json=payload)
     except Exception as e:
-        st.error(f"Telegram Error: {e}")
+        pass
 
 st.title("📊 NEXUS AI")
 st.caption("Market Research | MTF | SMC Structure | Backtesting | Validation")
@@ -43,13 +31,9 @@ st.caption("Market Research | MTF | SMC Structure | Backtesting | Validation")
 # 1. MARKET SETTINGS
 # ============================================================
 SYMBOLS = {
-    "EUR/USD": "EURUSD=X",
-    "GBP/USD": "GBPUSD=X",
-    "USD/JPY": "JPY=X",
-    "Gold Futures": "GC=F",
-    "Bitcoin": "BTC-USD"
+    "EUR/USD": "EURUSD=X", "GBP/USD": "GBPUSD=X", "USD/JPY": "JPY=X",
+    "Gold Futures": "GC=F", "Bitcoin": "BTC-USD"
 }
-
 HTF_MAP = {"15m": "1h", "1h": "4h", "4h": "1d", "1d": "1wk"}
 TF_DURATION = {"15m": pd.Timedelta(minutes=15), "1h": pd.Timedelta(hours=1), "4h": pd.Timedelta(hours=4), "1d": pd.Timedelta(days=1), "1wk": pd.Timedelta(days=7)}
 
@@ -113,21 +97,16 @@ def resample_ohlcv(data, rule):
 def download_data(ticker, tf):
     if tf == "15m":
         data = download_raw(ticker, "15m", "60d")
-        if data.empty or len(data) < 100:
-            data = download_raw(ticker, "15m", "30d")
+        if data.empty or len(data) < 100: data = download_raw(ticker, "15m", "30d")
         return data
     if tf == "1h": return download_raw(ticker, "1h", "730d")
-    if tf == "4h":
-        base = download_raw(ticker, "1h", "730d")
-        return resample_ohlcv(base, "4h")
+    if tf == "4h": return resample_ohlcv(download_raw(ticker, "1h", "730d"), "4h")
     if tf == "1d": return download_raw(ticker, "1d", "5y")
-    if tf == "1wk":
-        daily = download_raw(ticker, "1d", "5y")
-        return resample_ohlcv(daily, "W-FRI")
+    if tf == "1wk": return resample_ohlcv(download_raw(ticker, "1d", "5y"), "W-FRI")
     raise ValueError(f"Unsupported timeframe: {tf}")
 
 # ============================================================
-# 4. INDICATORS
+# 4. INDICATORS & SMC
 # ============================================================
 def calculate_indicators(data):
     df = data.copy()
@@ -156,9 +135,6 @@ def calculate_indicators(data):
     df["ATR"] = tr.ewm(alpha=1/14, adjust=False, min_periods=14).mean()
     return df
 
-# ============================================================
-# 5. SMC STRUCTURE
-# ============================================================
 def calculate_smc(data, left=3, right=3):
     df = data.copy()
     df["Swing_High_Plot"] = np.nan
@@ -195,7 +171,7 @@ def calculate_smc(data, left=3, right=3):
     return df
 
 # ============================================================
-# 6. TREND & HTF ALIGNMENT
+# 5. TREND & HTF ALIGNMENT
 # ============================================================
 def add_trend(data):
     df = data.copy()
@@ -229,22 +205,17 @@ def align_htf_trend(primary, htf, primary_tf, higher_tf):
     return result.astype(str)
 
 # ============================================================
-# 7. SIGNAL ENGINE
+# 6. SIGNAL & BACKTEST
 # ============================================================
 def generate_signal(row, htf_trend):
     needed = ["RSI", "ATR", "EMA20", "EMA50", "MACD", "MACD_Signal"]
     if any(pd.isna(row.get(c)) for c in needed): return "WAIT"
-    
     bull = (row["Close"] > row["EMA20"] > row["EMA50"] and row["RSI"] > 50 and row["MACD"] > row["MACD_Signal"] and htf_trend == "BULLISH" and row["Structure_Event"] in ("Bullish BOS", "Bullish CHoCH"))
     bear = (row["Close"] < row["EMA20"] < row["EMA50"] and row["RSI"] < 50 and row["MACD"] < row["MACD_Signal"] and htf_trend == "BEARISH" and row["Structure_Event"] in ("Bearish BOS", "Bearish CHoCH"))
-    
     if bull: return "BUY"
     if bear: return "SELL"
     return "WAIT"
 
-# ============================================================
-# 8. BACKTEST ENGINE
-# ============================================================
 def run_backtest(df, htf_trends, daily_limit, max_losses, max_dd, spread_value, slippage_value, commission, start_index=1):
     trades, curve = [], []
     position, daily_pnl = None, {}
@@ -298,8 +269,6 @@ def run_backtest(df, htf_trends, daily_limit, max_losses, max_dd, spread_value, 
                 elif bar["Open"] <= position["tp"]: exit_price, reason = float(position["tp"]), "TP_GAP"
                 
             if exit_price is None:
-                hit_sl = (bar["Low"] <= position["sl"] or bar["High"] >= position["sl"])
-                hit_tp = (bar["High"] >= position["tp"] or bar["Low"] <= position["tp"])
                 if side == "BUY":
                     if bar["Low"] <= position["sl"]: exit_price, reason = float(position["sl"]), "SL"
                     elif bar["High"] >= position["tp"]: exit_price, reason = float(position["tp"]), "TP"
@@ -320,8 +289,7 @@ def run_backtest(df, htf_trends, daily_limit, max_losses, max_dd, spread_value, 
         atr = df.iloc[i]["ATR"]
         if pd.isna(atr) or not np.isfinite(atr) or atr <= 0: continue
         
-        next_bar = df.iloc[i + 1]
-        entry = entry_fill(float(next_bar["Open"]), signal)
+        entry = entry_fill(float(df.iloc[i + 1]["Open"]), signal)
         risk_price = 1.5 * float(atr)
         if risk_price <= 0: continue
         
@@ -345,7 +313,7 @@ def run_backtest(df, htf_trends, daily_limit, max_losses, max_dd, spread_value, 
     return result_df, curve_df, summary
 
 # ============================================================
-# 9. LOAD DATA & RUN
+# 7. MAIN APP EXECUTION
 # ============================================================
 try:
     with st.spinner("Downloading market history..."):
@@ -374,7 +342,7 @@ except Exception as exc:
     st.stop()
 
 # ============================================================
-# 10. DASHBOARD & SIGNAL ENGINE
+# 8. DASHBOARD & SIGNAL
 # ============================================================
 latest = primary.iloc[-1]
 st.divider()
@@ -399,10 +367,11 @@ else:
     st.warning("No valid signal — WAIT")
 
 # ============================================================
-# 11. CHART & BACKTEST
+# 9. CHART & BACKTEST METRICS
 # ============================================================
 st.divider()
 st.header("📈 Advanced Chart & Backtest")
+
 fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_heights=[0.60, 0.20, 0.20])
 fig.add_trace(go.Candlestick(x=primary.index, open=primary["Open"], high=primary["High"], low=primary["Low"], close=primary["Close"], name="Candles"), row=1, col=1)
 fig.add_trace(go.Scatter(x=primary.index, y=primary["EMA20"], name="EMA20"), row=1, col=1)
@@ -418,11 +387,12 @@ res, curve, stats = run_backtest(primary, htf_trend_series, daily_loss_limit, in
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Entries", stats["Entries"])
 c2.metric("Win Rate", f"{stats['Win Rate (%)']:.1f}%")
-c3.metric("Net Result", f"{stats['Net Result (R)"]:.2f} R")
+# 🟢 دلته تېروتنه سمه شوه
+c3.metric("Net Result", f"{stats['Net Result (R)']:.2f} R")
 c4.metric("Profit Factor", f"{stats['Profit Factor']:.2f}" if not pd.isna(stats["Profit Factor"]) and not np.isinf(stats["Profit Factor"]) else "N/A")
 
 # ============================================================
-# 12. MULTI-MARKET SCANNER
+# 10. MULTI-MARKET SCANNER
 # ============================================================
 st.divider()
 st.header("🌍 Multi-Market Scanner")
