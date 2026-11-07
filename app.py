@@ -1,5 +1,4 @@
 import os
-import time
 import logging
 import numpy as np
 import pandas as pd
@@ -12,11 +11,12 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timezone
 
 
-# ============================================================
+# =========================================================
 # NEXUS AI
-# Educational Research & Simulation Only
-# No broker connection / No real-money execution
-# ============================================================
+# Educational Research & Historical Simulation Only
+# No Broker Connection
+# No Real-Money Execution
+# =========================================================
 
 st.set_page_config(
     page_title="NEXUS AI",
@@ -28,9 +28,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("NEXUS")
 
 
-# ============================================================
+# =========================================================
 # CONFIGURATION
-# ============================================================
+# =========================================================
 
 SYMBOLS = {
     "EUR/USD": "EURUSD=X",
@@ -55,16 +55,13 @@ TF_DURATION = {
     "1wk": pd.Timedelta(days=7)
 }
 
-DOWNLOAD_SETTINGS = {
-    "15m": ("15m", "60d"),
-    "1h": ("1h", "730d"),
-    "1d": ("1d", "5y")
-}
+MIN_PRIMARY_BARS = 100
+MIN_HTF_BARS = 60
 
 
-# ============================================================
-# SECURITY / TELEGRAM SETTINGS
-# ============================================================
+# =========================================================
+# TELEGRAM SETTINGS
+# =========================================================
 
 def get_secret(name, default=""):
     try:
@@ -84,16 +81,14 @@ TELEGRAM_CHAT_ID = get_secret("TELEGRAM_CHAT_ID")
 def send_telegram_alert(message):
 
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        return False, "Telegram settings are missing."
+        return False, "Telegram is not configured."
 
     url = (
-        "https://api.telegram.org/bot"
-        + TELEGRAM_BOT_TOKEN
-        + "/sendMessage"
+        f"https://api.telegram.org/"
+        f"bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     )
 
     try:
-
         response = requests.post(
             url,
             json={
@@ -113,15 +108,13 @@ def send_telegram_alert(message):
         return False, "Telegram rejected the message."
 
     except requests.RequestException as error:
-
         logger.exception("Telegram error")
-
         return False, str(error)
 
 
-# ============================================================
-# DATETIME NORMALIZATION
-# ============================================================
+# =========================================================
+# DATETIME FUNCTIONS
+# =========================================================
 
 def normalize_datetime_index(index):
 
@@ -137,8 +130,8 @@ def normalize_datetime_index(index):
 
 def normalize_dataframe(data):
 
-    if data.empty:
-        return data.copy()
+    if data is None or data.empty:
+        return pd.DataFrame()
 
     df = data.copy()
 
@@ -151,9 +144,9 @@ def normalize_dataframe(data):
     return df
 
 
-# ============================================================
-# DATA DOWNLOAD
-# ============================================================
+# =========================================================
+# MARKET DATA
+# =========================================================
 
 @st.cache_data(ttl=300, show_spinner=False)
 def download_raw(ticker, interval, period):
@@ -175,7 +168,7 @@ def download_raw(ticker, interval, period):
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
 
-        data = data.loc[:, ~data.columns.duplicated()].copy()
+        data = data.loc[:, ~data.columns.duplicated()]
 
         required = [
             "Open",
@@ -184,7 +177,7 @@ def download_raw(ticker, interval, period):
             "Close"
         ]
 
-        if not all(c in data.columns for c in required):
+        if not all(col in data.columns for col in required):
             return pd.DataFrame()
 
         if "Volume" not in data.columns:
@@ -194,16 +187,13 @@ def download_raw(ticker, interval, period):
             required + ["Volume"]
         ].copy()
 
-        for column in data.columns:
-
-            data[column] = pd.to_numeric(
-                data[column],
+        for col in data.columns:
+            data[col] = pd.to_numeric(
+                data[col],
                 errors="coerce"
             )
 
-        data = data.dropna(
-            subset=required
-        )
+        data = data.dropna(subset=required)
 
         data = normalize_dataframe(data)
 
@@ -219,14 +209,14 @@ def download_raw(ticker, interval, period):
         return pd.DataFrame()
 
 
-# ============================================================
+# =========================================================
 # RESAMPLING
-# ============================================================
+# =========================================================
 
 def resample_ohlcv(data, rule):
 
     if data.empty:
-        return data.copy()
+        return pd.DataFrame()
 
     df = normalize_dataframe(data)
 
@@ -245,12 +235,7 @@ def resample_ohlcv(data, rule):
     })
 
     result = result.dropna(
-        subset=[
-            "Open",
-            "High",
-            "Low",
-            "Close"
-        ]
+        subset=["Open", "High", "Low", "Close"]
     )
 
     return result
@@ -259,20 +244,10 @@ def resample_ohlcv(data, rule):
 def download_data(ticker, timeframe):
 
     if timeframe == "15m":
-
-        return download_raw(
-            ticker,
-            "15m",
-            "60d"
-        )
+        return download_raw(ticker, "15m", "60d")
 
     if timeframe == "1h":
-
-        return download_raw(
-            ticker,
-            "1h",
-            "730d"
-        )
+        return download_raw(ticker, "1h", "730d")
 
     if timeframe == "4h":
 
@@ -282,18 +257,10 @@ def download_data(ticker, timeframe):
             "730d"
         )
 
-        return resample_ohlcv(
-            hourly,
-            "4h"
-        )
+        return resample_ohlcv(hourly, "4h")
 
     if timeframe == "1d":
-
-        return download_raw(
-            ticker,
-            "1d",
-            "5y"
-        )
+        return download_raw(ticker, "1d", "5y")
 
     if timeframe == "1wk":
 
@@ -303,19 +270,16 @@ def download_data(ticker, timeframe):
             "5y"
         )
 
-        return resample_ohlcv(
-            daily,
-            "W-FRI"
-        )
+        return resample_ohlcv(daily, "W-FRI")
 
     raise ValueError(
         f"Unsupported timeframe: {timeframe}"
     )
 
 
-# ============================================================
-# CLOSED CANDLE FILTER
-# ============================================================
+# =========================================================
+# COMPLETED CANDLES
+# =========================================================
 
 def remove_incomplete_bars(data, timeframe):
 
@@ -324,20 +288,62 @@ def remove_incomplete_bars(data, timeframe):
 
     df = normalize_dataframe(data)
 
-    duration = TF_DURATION[timeframe]
-
     now = pd.Timestamp.now(tz="UTC")
+
+    # Conservative handling for daily/weekly candles.
+    # Exchange session calendars are not available here.
+
+    if timeframe in ("1d", "1wk"):
+
+        if len(df) > 1:
+            return df.iloc[:-1].copy()
+
+        return df.iloc[0:0].copy()
+
+    duration = TF_DURATION.get(timeframe)
+
+    if duration is None:
+        raise ValueError("Unsupported timeframe")
 
     available_at = df.index + duration
 
-    completed = available_at <= now
+    return df.loc[
+        available_at <= now
+    ].copy()
 
-    return df.loc[completed].copy()
+
+# =========================================================
+# WILDER MOVING AVERAGE
+# =========================================================
+
+def wilder_rma(series, period):
+
+    result = pd.Series(
+        np.nan,
+        index=series.index,
+        dtype=float
+    )
+
+    if len(series) < period:
+        return result
+
+    first_value = series.iloc[:period].mean()
+
+    result.iloc[period - 1] = first_value
+
+    for i in range(period, len(series)):
+
+        result.iloc[i] = (
+            result.iloc[i - 1] * (period - 1)
+            + series.iloc[i]
+        ) / period
+
+    return result
 
 
-# ============================================================
+# =========================================================
 # TECHNICAL INDICATORS
-# ============================================================
+# =========================================================
 
 def calculate_indicators(data):
 
@@ -364,20 +370,17 @@ def calculate_indicators(data):
     delta = close.diff()
 
     gain = delta.clip(lower=0)
-
     loss = -delta.clip(upper=0)
 
-    avg_gain = gain.ewm(
-        alpha=1 / 14,
-        adjust=False,
-        min_periods=14
-    ).mean()
+    avg_gain = wilder_rma(
+        gain.iloc[1:],
+        14
+    ).reindex(df.index)
 
-    avg_loss = loss.ewm(
-        alpha=1 / 14,
-        adjust=False,
-        min_periods=14
-    ).mean()
+    avg_loss = wilder_rma(
+        loss.iloc[1:],
+        14
+    ).reindex(df.index)
 
     rs = avg_gain / avg_loss.replace(
         0,
@@ -397,11 +400,6 @@ def calculate_indicators(data):
         (avg_gain == 0) & (avg_loss > 0),
         "RSI"
     ] = 0
-
-    df.loc[
-        (avg_gain == 0) & (avg_loss == 0),
-        "RSI"
-    ] = np.nan
 
     # MACD
 
@@ -437,47 +435,41 @@ def calculate_indicators(data):
 
         df["High"] - df["Low"],
 
-        (
-            df["High"] - previous_close
-        ).abs(),
+        (df["High"] - previous_close).abs(),
 
-        (
-            df["Low"] - previous_close
-        ).abs()
+        (df["Low"] - previous_close).abs()
 
     ], axis=1).max(axis=1)
 
-    df["ATR"] = true_range.ewm(
-        alpha=1 / 14,
-        adjust=False,
-        min_periods=14
-    ).mean()
+    df["ATR"] = wilder_rma(
+        true_range.iloc[1:],
+        14
+    ).reindex(df.index)
 
     return df
 
 
-# ============================================================
+# =========================================================
 # SMC STRUCTURE
-# ============================================================
+# =========================================================
 
 def calculate_smc(data, left=3, right=3):
 
     df = data.copy()
 
     df["Swing_High_Plot"] = np.nan
-
     df["Swing_Low_Plot"] = np.nan
 
     df["Structure_Event"] = ""
+    df["Confirmed_Pivot_High"] = np.nan
+    df["Confirmed_Pivot_Low"] = np.nan
 
     last_high = None
-
     last_low = None
 
     trend = None
 
     high_used = False
-
     low_used = False
 
     for i in range(left + right, len(df)):
@@ -492,6 +484,8 @@ def calculate_smc(data, left=3, right=3):
             pivot-left:pivot+right+1
         ]
 
+        # Confirmed swing high
+
         if (
             df["High"].iloc[pivot]
             == high_window.max()
@@ -503,10 +497,24 @@ def calculate_smc(data, left=3, right=3):
 
             high_used = False
 
+            # Plot at confirmation candle,
+            # not at the historical pivot candle.
+
             df.iloc[
-                pivot,
-                df.columns.get_loc("Swing_High_Plot")
+                i,
+                df.columns.get_loc(
+                    "Swing_High_Plot"
+                )
             ] = last_high
+
+            df.iloc[
+                i,
+                df.columns.get_loc(
+                    "Confirmed_Pivot_High"
+                )
+            ] = last_high
+
+        # Confirmed swing low
 
         if (
             df["Low"].iloc[pivot]
@@ -520,8 +528,17 @@ def calculate_smc(data, left=3, right=3):
             low_used = False
 
             df.iloc[
-                pivot,
-                df.columns.get_loc("Swing_Low_Plot")
+                i,
+                df.columns.get_loc(
+                    "Swing_Low_Plot"
+                )
+            ] = last_low
+
+            df.iloc[
+                i,
+                df.columns.get_loc(
+                    "Confirmed_Pivot_Low"
+                )
             ] = last_low
 
         close_price = float(
@@ -543,7 +560,6 @@ def calculate_smc(data, left=3, right=3):
             )
 
             trend = "bullish"
-
             high_used = True
 
         elif (
@@ -559,20 +575,21 @@ def calculate_smc(data, left=3, right=3):
             )
 
             trend = "bearish"
-
             low_used = True
 
         df.iloc[
             i,
-            df.columns.get_loc("Structure_Event")
+            df.columns.get_loc(
+                "Structure_Event"
+            )
         ] = event
 
     return df
 
 
-# ============================================================
+# =========================================================
 # TREND ENGINE
-# ============================================================
+# =========================================================
 
 def add_trend(data):
 
@@ -585,37 +602,26 @@ def add_trend(data):
     ].notna().all(axis=1)
 
     bullish = (
-
         valid
         & (df["Close"] > df["EMA20"])
         & (df["EMA20"] > df["EMA50"])
-
     )
 
     bearish = (
-
         valid
         & (df["Close"] < df["EMA20"])
         & (df["EMA20"] < df["EMA50"])
-
     )
 
-    df.loc[
-        bullish,
-        "Trend"
-    ] = "BULLISH"
-
-    df.loc[
-        bearish,
-        "Trend"
-    ] = "BEARISH"
+    df.loc[bullish, "Trend"] = "BULLISH"
+    df.loc[bearish, "Trend"] = "BEARISH"
 
     return df
 
 
-# ============================================================
-# MULTI TIMEFRAME ALIGNMENT
-# ============================================================
+# =========================================================
+# MULTI-TIMEFRAME ALIGNMENT
+# =========================================================
 
 def align_htf_trend(
     primary,
@@ -631,60 +637,57 @@ def align_htf_trend(
             index=primary.index
         )
 
-    p_index = normalize_datetime_index(
-        primary.index
-    )
-
-    h_index = normalize_datetime_index(
-        htf.index
-    )
+    primary = normalize_dataframe(primary)
+    htf = normalize_dataframe(htf)
 
     primary_data = pd.DataFrame({
 
-        "available_at":
-            p_index + TF_DURATION[primary_tf],
+        "Time": primary.index,
 
-        "original_order":
-            np.arange(len(primary))
+        "Order": np.arange(
+            len(primary)
+        )
 
     })
 
     higher_data = pd.DataFrame({
 
-        "htf_available_at":
-            h_index + TF_DURATION[higher_tf],
+        "HTF_Time": htf.index,
 
-        "htf_trend":
-            htf["Trend"].astype(str).to_numpy()
+        "HTF_Trend": htf["Trend"].astype(
+            str
+        ).values
 
     })
 
+    primary_data["Available"] = (
+        primary_data["Time"]
+        + TF_DURATION[primary_tf]
+    )
+
+    higher_data["Available"] = (
+        higher_data["HTF_Time"]
+        + TF_DURATION[higher_tf]
+    )
+
     merged = pd.merge_asof(
 
-        primary_data.sort_values(
-            "available_at"
-        ),
+        primary_data.sort_values("Available"),
 
-        higher_data.sort_values(
-            "htf_available_at"
-        ),
+        higher_data.sort_values("Available"),
 
-        left_on="available_at",
+        on="Available",
 
-        right_on="htf_available_at",
-
-        direction="backward",
-
-        allow_exact_matches=True
+        direction="backward"
 
     )
 
     merged = merged.sort_values(
-        "original_order"
+        "Order"
     )
 
     result = merged[
-        "htf_trend"
+        "HTF_Trend"
     ].fillna("UNKNOWN")
 
     result.index = primary.index
@@ -692,9 +695,9 @@ def align_htf_trend(
     return result.astype(str)
 
 
-# ============================================================
+# =========================================================
 # SIGNAL ENGINE
-# ============================================================
+# =========================================================
 
 def generate_signal(row, htf_trend):
 
@@ -718,7 +721,8 @@ def generate_signal(row, htf_trend):
 
     bullish = (
 
-        row["Close"] > row["EMA20"] > row["EMA50"]
+        row["Close"] > row["EMA20"]
+        and row["EMA20"] > row["EMA50"]
 
         and row["RSI"] > 50
 
@@ -726,7 +730,8 @@ def generate_signal(row, htf_trend):
 
         and htf_trend == "BULLISH"
 
-        and row["Structure_Event"] in (
+        and row["Structure_Event"]
+        in (
             "Bullish BOS",
             "Bullish CHoCH"
         )
@@ -735,7 +740,8 @@ def generate_signal(row, htf_trend):
 
     bearish = (
 
-        row["Close"] < row["EMA20"] < row["EMA50"]
+        row["Close"] < row["EMA20"]
+        and row["EMA20"] < row["EMA50"]
 
         and row["RSI"] < 50
 
@@ -743,7 +749,8 @@ def generate_signal(row, htf_trend):
 
         and htf_trend == "BEARISH"
 
-        and row["Structure_Event"] in (
+        and row["Structure_Event"]
+        in (
             "Bearish BOS",
             "Bearish CHoCH"
         )
@@ -759,9 +766,9 @@ def generate_signal(row, htf_trend):
     return "WAIT"
 
 
-# ============================================================
+# =========================================================
 # BACKTEST ENGINE
-# ============================================================
+# =========================================================
 
 def run_backtest(
     df,
@@ -777,7 +784,6 @@ def run_backtest(
 ):
 
     trades = []
-
     curve = []
 
     position = None
@@ -785,62 +791,67 @@ def run_backtest(
     daily_pnl = {}
 
     consecutive_losses = 0
-
     paused_global = False
 
     equity = 0.0
-
     peak = 0.0
 
     max_drawdown = 0.0
 
     entries = 0
-
     forced = 0
+
+    empty_summary = {
+
+        "Entries": 0,
+        "Closed": 0,
+        "Win Rate (%)": 0.0,
+        "Expectancy (R)": 0.0,
+        "Profit Factor": np.nan,
+        "Net Result (R)": 0.0,
+        "Max Drawdown (R)": 0.0,
+        "Paused": False,
+        "Forced": 0
+
+    }
 
     if df.empty or len(df) < 2:
 
         return (
             pd.DataFrame(),
             pd.DataFrame(),
-            {
-                "Entries": 0,
-                "Closed": 0,
-                "Win Rate (%)": 0.0,
-                "Expectancy (R)": 0.0,
-                "Profit Factor": np.nan,
-                "Net Result (R)": 0.0,
-                "Max Drawdown (R)": 0.0,
-                "Paused": False,
-                "Forced": 0
-            }
+            empty_summary
         )
 
-    def entry_fill(raw_price, side):
+    def entry_fill(price, side):
 
         adjustment = (
-            spread_value / 2.0
+            spread_value / 2
             + slippage_value
         )
 
         if side == "BUY":
-            return raw_price + adjustment
+            return price + adjustment
 
-        return raw_price - adjustment
+        return price - adjustment
 
-    def exit_fill(raw_price, side):
+    def exit_fill(price, side):
 
         adjustment = (
-            spread_value / 2.0
+            spread_value / 2
             + slippage_value
         )
 
         if side == "BUY":
-            return raw_price - adjustment
+            return price - adjustment
 
-        return raw_price + adjustment
+        return price + adjustment
 
-    def close_position(timestamp, raw_exit, reason):
+    def close_position(
+        timestamp,
+        raw_exit,
+        reason
+    ):
 
         nonlocal position
         nonlocal equity
@@ -876,16 +887,13 @@ def run_backtest(
 
         equity += net_r
 
-        peak = max(
-            peak,
-            equity
-        )
+        peak = max(peak, equity)
 
-        dd = peak - equity
+        drawdown = peak - equity
 
         max_drawdown = max(
             max_drawdown,
-            dd
+            drawdown
         )
 
         day_key = str(
@@ -907,48 +915,28 @@ def run_backtest(
 
         trades.append({
 
-            "Entry Time":
-                position["entry_time"],
+            "Entry Time": position["entry_time"],
+            "Exit Time": timestamp,
+            "Side": side,
 
-            "Exit Time":
-                timestamp,
+            "Entry": position["entry"],
+            "Exit": fill,
 
-            "Side":
-                side,
+            "Stop Loss": position["sl"],
+            "Take Profit": position["tp"],
 
-            "Entry":
-                position["entry"],
+            "Gross Result (R)": gross_r,
+            "Result (R)": net_r,
 
-            "Exit":
-                fill,
-
-            "Stop Loss":
-                position["sl"],
-
-            "Take Profit":
-                position["tp"],
-
-            "Gross Result (R)":
-                gross_r,
-
-            "Result (R)":
-                net_r,
-
-            "Exit Reason":
-                reason
+            "Exit Reason": reason
 
         })
 
         curve.append({
 
-            "Time":
-                timestamp,
-
-            "Equity (R)":
-                equity,
-
-            "Drawdown (R)":
-                dd
+            "Time": timestamp,
+            "Equity (R)": equity,
+            "Drawdown (R)": drawdown
 
         })
 
@@ -964,19 +952,18 @@ def run_backtest(
             pd.Timestamp(timestamp).date()
         )
 
-        # ----------------------------------------------------
-        # EXISTING POSITION
-        # ----------------------------------------------------
+        # -------------------------------------
+        # Manage existing position
+        # -------------------------------------
 
         if position is not None:
 
             side = position["side"]
 
             exit_price = None
-
             reason = None
 
-            # Gap checks
+            # Gap handling
 
             if side == "BUY":
 
@@ -1014,9 +1001,9 @@ def run_backtest(
 
                     reason = "TP_GAP"
 
-            # Intrabar checks
-            # If SL and TP are both touched,
-            # SL is assumed first (conservative).
+            # Intrabar handling
+            # Conservative assumption:
+            # SL is checked before TP.
 
             if exit_price is None:
 
@@ -1064,27 +1051,26 @@ def run_backtest(
                     reason
                 )
 
-        # ----------------------------------------------------
-        # RISK CONTROLS
-        # ----------------------------------------------------
+        # -------------------------------------
+        # Risk controls
+        # -------------------------------------
 
-        if (
-            peak - equity
-        ) >= max_dd:
+        current_drawdown = peak - equity
 
+        if current_drawdown >= max_dd:
             paused_global = True
 
         if consecutive_losses >= max_losses:
-
             paused_global = True
 
         if paused_global:
             continue
 
-        if (
-            daily_pnl.get(day_key, 0.0)
-            <= -daily_limit
-        ):
+        if daily_pnl.get(
+            day_key,
+            0.0
+        ) <= -daily_limit:
+
             continue
 
         if position is not None:
@@ -1093,9 +1079,9 @@ def run_backtest(
         if i >= len(df) - 1:
             continue
 
-        # ----------------------------------------------------
-        # SIGNAL
-        # ----------------------------------------------------
+        # -------------------------------------
+        # Signal
+        # -------------------------------------
 
         signal = generate_signal(
             df.iloc[i],
@@ -1113,8 +1099,6 @@ def run_backtest(
             or atr <= 0
         ):
             continue
-
-        # Entry on next candle open
 
         raw_entry = float(
             df.iloc[i + 1]["Open"]
@@ -1168,9 +1152,9 @@ def run_backtest(
 
         entries += 1
 
-    # --------------------------------------------------------
-    # FORCE CLOSE OPEN POSITION
-    # --------------------------------------------------------
+    # -------------------------------------
+    # End of historical data
+    # -------------------------------------
 
     if position is not None:
 
@@ -1180,34 +1164,28 @@ def run_backtest(
             "FORCED_CLOSE"
         )
 
-    result_df = pd.DataFrame(trades)
+    results = pd.DataFrame(trades)
 
-    curve_df = pd.DataFrame(curve)
+    equity_curve = pd.DataFrame(curve)
 
-    if result_df.empty:
+    if results.empty:
 
-        summary = {
+        empty_summary["Entries"] = entries
+        empty_summary["Paused"] = paused_global
+        empty_summary["Forced"] = forced
 
-            "Entries": entries,
-            "Closed": 0,
-            "Win Rate (%)": 0.0,
-            "Expectancy (R)": 0.0,
-            "Profit Factor": np.nan,
-            "Net Result (R)": 0.0,
-            "Max Drawdown (R)": max_drawdown,
-            "Paused": paused_global,
-            "Forced": forced
+        return (
+            results,
+            equity_curve,
+            empty_summary
+        )
 
-        }
-
-        return result_df, curve_df, summary
-
-    wins = result_df[
-        result_df["Result (R)"] > 0
+    wins = results[
+        results["Result (R)"] > 0
     ]
 
-    losses = result_df[
-        result_df["Result (R)"] < 0
+    losses = results[
+        results["Result (R)"] < 0
     ]
 
     gross_profit = wins[
@@ -1220,51 +1198,56 @@ def run_backtest(
 
     if gross_loss > 0:
 
-        pf = gross_profit / gross_loss
+        profit_factor = (
+            gross_profit / gross_loss
+        )
 
     elif gross_profit > 0:
 
-        pf = np.inf
+        profit_factor = np.inf
 
     else:
 
-        pf = np.nan
+        profit_factor = np.nan
 
     summary = {
 
         "Entries": entries,
 
-        "Closed": len(result_df),
+        "Closed": len(results),
 
-        "Win Rate (%)":
-            len(wins) / len(result_df) * 100,
+        "Win Rate (%)": (
+            len(wins) / len(results) * 100
+        ),
 
-        "Expectancy (R)":
-            result_df["Result (R)"].mean(),
+        "Expectancy (R)": (
+            results["Result (R)"].mean()
+        ),
 
-        "Profit Factor":
-            pf,
+        "Profit Factor": profit_factor,
 
-        "Net Result (R)":
-            result_df["Result (R)"].sum(),
+        "Net Result (R)": (
+            results["Result (R)"].sum()
+        ),
 
-        "Max Drawdown (R)":
-            max_drawdown,
+        "Max Drawdown (R)": max_drawdown,
 
-        "Paused":
-            paused_global,
+        "Paused": paused_global,
 
-        "Forced":
-            forced
+        "Forced": forced
 
     }
 
-    return result_df, curve_df, summary
+    return (
+        results,
+        equity_curve,
+        summary
+    )
 
 
-# ============================================================
+# =========================================================
 # NEWS ENGINE
-# ============================================================
+# =========================================================
 
 @st.cache_data(ttl=600, show_spinner=False)
 def get_yahoo_news(ticker):
@@ -1293,8 +1276,13 @@ def get_yahoo_news(ticker):
             if not title:
                 continue
 
+            canonical = content.get(
+                "canonicalUrl",
+                {}
+            )
+
             link = (
-                content.get("canonicalUrl", {}).get("url")
+                canonical.get("url")
                 or item.get("link")
             )
 
@@ -1302,7 +1290,10 @@ def get_yahoo_news(ticker):
                 continue
 
             publisher = (
-                content.get("provider", {}).get("displayName")
+                content.get(
+                    "provider",
+                    {}
+                ).get("displayName")
                 or item.get("publisher")
                 or "Unknown"
             )
@@ -1314,7 +1305,10 @@ def get_yahoo_news(ticker):
 
             try:
 
-                if isinstance(pub_time, (int, float)):
+                if isinstance(
+                    pub_time,
+                    (int, float)
+                ):
 
                     published = datetime.fromtimestamp(
                         pub_time,
@@ -1352,19 +1346,22 @@ def get_yahoo_news(ticker):
 
     except Exception:
 
-        logger.exception("News loading failed")
+        logger.exception(
+            "News loading failed"
+        )
 
         return []
 
 
-# ============================================================
-# MARKET ANALYSIS UI
-# ============================================================
+# =========================================================
+# MAIN DASHBOARD
+# =========================================================
 
 st.title("📊 NEXUS AI")
 
 st.caption(
-    "Market Research | MTF | SMC | Backtesting | Economic News"
+    "Market Research | MTF | SMC | "
+    "Backtesting | Economic News"
 )
 
 tab_analysis, tab_news, tab_system = st.tabs([
@@ -1378,9 +1375,9 @@ tab_analysis, tab_news, tab_system = st.tabs([
 ])
 
 
-# ============================================================
-# ANALYSIS TAB
-# ============================================================
+# =========================================================
+# MARKET ANALYSIS
+# =========================================================
 
 with tab_analysis:
 
@@ -1465,15 +1462,12 @@ with tab_analysis:
         step=0.01
     )
 
-    if st.sidebar.button("🔄 Refresh Data"):
+    if st.sidebar.button(
+        "🔄 Refresh Data"
+    ):
 
         st.cache_data.clear()
-
         st.rerun()
-
-    # --------------------------------------------------------
-    # LOAD DATA
-    # --------------------------------------------------------
 
     try:
 
@@ -1491,10 +1485,13 @@ with tab_analysis:
                 htf_timeframe
             )
 
-        if primary_raw.empty or htf_raw.empty:
+        if (
+            primary_raw.empty
+            or htf_raw.empty
+        ):
 
             st.error(
-                "No market data available. Try refreshing."
+                "No market data available."
             )
 
             st.stop()
@@ -1512,8 +1509,8 @@ with tab_analysis:
             )
 
         if (
-            len(primary_raw) < 100
-            or len(htf_raw) < 60
+            len(primary_raw) < MIN_PRIMARY_BARS
+            or len(htf_raw) < MIN_HTF_BARS
         ):
 
             st.error(
@@ -1522,9 +1519,7 @@ with tab_analysis:
 
             st.stop()
 
-        # ----------------------------------------------------
-        # INDICATORS AND STRUCTURE
-        # ----------------------------------------------------
+        # Primary analysis
 
         primary = calculate_indicators(
             primary_raw
@@ -1538,6 +1533,8 @@ with tab_analysis:
             primary
         )
 
+        # Higher timeframe
+
         higher = calculate_indicators(
             htf_raw
         )
@@ -1546,11 +1543,15 @@ with tab_analysis:
             higher
         )
 
+        # MTF alignment
+
         htf_trends = align_htf_trend(
+
             primary,
             higher,
             timeframe,
             htf_timeframe
+
         )
 
         primary["HTF_Trend"] = htf_trends
@@ -1578,17 +1579,15 @@ with tab_analysis:
 
         st.stop()
 
-    # --------------------------------------------------------
-    # DASHBOARD
-    # --------------------------------------------------------
+    if primary.empty:
+        st.error("No completed candles available.")
+        st.stop()
 
     latest = primary.iloc[-1]
 
     last_candle_time = primary.index[-1]
 
-    now = pd.Timestamp.now(
-        tz="UTC"
-    )
+    now = pd.Timestamp.now(tz="UTC")
 
     freshness = now - last_candle_time
 
@@ -1625,10 +1624,6 @@ with tab_analysis:
         latest["HTF_Trend"]
     )
 
-    # --------------------------------------------------------
-    # SIGNAL
-    # --------------------------------------------------------
-
     st.subheader(
         "🧠 Signal Engine"
     )
@@ -1638,13 +1633,15 @@ with tab_analysis:
     if sig == "BUY":
 
         st.success(
-            "Bullish conditions detected — Research Signal: BUY"
+            "Bullish conditions detected — "
+            "Research Signal: BUY"
         )
 
     elif sig == "SELL":
 
         st.error(
-            "Bearish conditions detected — Research Signal: SELL"
+            "Bearish conditions detected — "
+            "Research Signal: SELL"
         )
 
     else:
@@ -1654,68 +1651,50 @@ with tab_analysis:
         )
 
     st.caption(
-        "دا سیګنالونه یوازې د څېړنې او زده کړې لپاره دي؛ "
-        "د معاملې سپارښتنه نه ده."
+        "Signals are educational research outputs "
+        "and are not trading recommendations."
     )
 
-    # --------------------------------------------------------
-    # TELEGRAM ALERT
-    # --------------------------------------------------------
+    # -----------------------------------------
+    # Manual Telegram alert
+    # -----------------------------------------
 
-    if "sent_alerts" not in st.session_state:
-
-        st.session_state.sent_alerts = set()
-
-    alert_key = (
-
-        f"{symbol}|{timeframe}|"
-        f"{last_candle_time}|{sig}"
-
+    st.subheader(
+        "📨 Telegram Research Notification"
     )
 
-    if sig in ("BUY", "SELL"):
+    if st.button(
+        "Send Current Research Status to Telegram"
+    ):
 
-        if alert_key not in st.session_state.sent_alerts:
+        message = (
 
-            message = (
+            "NEXUS AI RESEARCH STATUS\n"
 
-                "NEXUS AI RESEARCH ALERT\n"
+            f"Market: {market_name}\n"
 
-                f"Market: {market_name}\n"
+            f"Timeframe: {timeframe}\n"
 
-                f"Timeframe: {timeframe}\n"
+            f"Signal: {sig}\n"
 
-                f"Signal: {sig}\n"
+            f"Price: {latest['Close']:.5f}\n"
 
-                f"Price: {latest['Close']:.5f}\n"
+            "Educational research only."
 
-                "Educational research only."
+        )
 
-            )
+        success, status = send_telegram_alert(
+            message
+        )
 
-            success, message_status = send_telegram_alert(
-                message
-            )
+        if success:
+            st.success(status)
+        else:
+            st.warning(status)
 
-            if success:
-
-                st.session_state.sent_alerts.add(
-                    alert_key
-                )
-
-                st.toast(
-                    "Telegram research alert sent."
-                )
-
-            elif TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-
-                st.caption(
-                    f"Telegram: {message_status}"
-                )
-
-    # --------------------------------------------------------
-    # CHART
-    # --------------------------------------------------------
+    # -----------------------------------------
+    # Advanced Chart
+    # -----------------------------------------
 
     st.divider()
 
@@ -1804,6 +1783,44 @@ with tab_analysis:
 
             x=primary.index,
 
+            y=primary["Swing_High_Plot"],
+
+            mode="markers",
+
+            name="Confirmed Swing High"
+
+        ),
+
+        row=1,
+        col=1
+
+    )
+
+    fig.add_trace(
+
+        go.Scatter(
+
+            x=primary.index,
+
+            y=primary["Swing_Low_Plot"],
+
+            mode="markers",
+
+            name="Confirmed Swing Low"
+
+        ),
+
+        row=1,
+        col=1
+
+    )
+
+    fig.add_trace(
+
+        go.Scatter(
+
+            x=primary.index,
+
             y=primary["RSI"],
 
             name="RSI"
@@ -1849,14 +1866,39 @@ with tab_analysis:
 
     )
 
+    fig.add_trace(
+
+        go.Bar(
+
+            x=primary.index,
+
+            y=primary["MACD_Hist"],
+
+            name="MACD Histogram"
+
+        ),
+
+        row=3,
+        col=1
+
+    )
+
     fig.update_layout(
 
-        height=700,
+        height=750,
 
         template="plotly_dark",
 
-        xaxis_rangeslider_visible=False
+        xaxis_rangeslider_visible=False,
 
+        hovermode="x unified"
+
+    )
+
+    fig.update_yaxes(
+        range=[0, 100],
+        row=2,
+        col=1
     )
 
     st.plotly_chart(
@@ -1864,9 +1906,9 @@ with tab_analysis:
         use_container_width=True
     )
 
-    # --------------------------------------------------------
-    # BACKTEST
-    # --------------------------------------------------------
+    # -----------------------------------------
+    # Backtesting
+    # -----------------------------------------
 
     st.divider()
 
@@ -1914,11 +1956,8 @@ with tab_analysis:
     pf = stats["Profit Factor"]
 
     if pd.notna(pf) and np.isfinite(pf):
-
         pf_text = f"{pf:.2f}"
-
     else:
-
         pf_text = "N/A"
 
     c4.metric(
@@ -1927,8 +1966,14 @@ with tab_analysis:
     )
 
     st.info(
-        "Risk/Reward: 1 : 1.33 "
-        "(TP = 2 ATR / SL = 1.5 ATR)"
+        "Simulation assumptions: "
+        "TP = 2 ATR / SL = 1.5 ATR. "
+        "Nominal Reward/Risk = 1.33."
+    )
+
+    st.write(
+        "Expectancy:",
+        f"{stats['Expectancy (R)']:.3f} R"
     )
 
     st.write(
@@ -1953,9 +1998,23 @@ with tab_analysis:
         )
 
         st.line_chart(
-            equity_curve.set_index("Time")[
-                "Equity (R)"
-            ]
+
+            equity_curve.set_index(
+                "Time"
+            )["Equity (R)"]
+
+        )
+
+        st.subheader(
+            "Drawdown History"
+        )
+
+        st.line_chart(
+
+            equity_curve.set_index(
+                "Time"
+            )["Drawdown (R)"]
+
         )
 
     if not results.empty:
@@ -1991,9 +2050,9 @@ with tab_analysis:
             "No completed historical trades were found."
         )
 
-    # --------------------------------------------------------
-    # MULTI MARKET SCAN
-    # --------------------------------------------------------
+    # -----------------------------------------
+    # Multi-market Scanner
+    # -----------------------------------------
 
     st.divider()
 
@@ -2007,7 +2066,6 @@ with tab_analysis:
     ):
 
         scan_results = []
-
         scan_errors = []
 
         with st.spinner(
@@ -2041,8 +2099,8 @@ with tab_analysis:
                         )
 
                     if (
-                        len(p_raw) < 100
-                        or len(h_raw) < 60
+                        len(p_raw) < MIN_PRIMARY_BARS
+                        or len(h_raw) < MIN_HTF_BARS
                     ):
 
                         scan_errors.append({
@@ -2067,10 +2125,12 @@ with tab_analysis:
                         p_df
                     )
 
+                    h_df = calculate_indicators(
+                        h_raw
+                    )
+
                     h_df = add_trend(
-                        calculate_indicators(
-                            h_raw
-                        )
+                        h_df
                     )
 
                     h_trend = align_htf_trend(
@@ -2183,9 +2243,9 @@ with tab_analysis:
             )
 
 
-# ============================================================
-# ECONOMIC NEWS TAB
-# ============================================================
+# =========================================================
+# ECONOMIC NEWS
+# =========================================================
 
 with tab_news:
 
@@ -2195,8 +2255,7 @@ with tab_news:
 
     st.info(
         "دا برخه د معلوماتو او څېړنې لپاره ده. "
-        "اوس مهال لاندې اقتصادي سرچینې ښودل کېږي؛ "
-        "دا لا Live Economic Calendar نه دی."
+        "دا Live Economic Calendar نه دی."
     )
 
     st.subheader(
@@ -2256,8 +2315,7 @@ with tab_news:
         "Refresh News"
     ):
 
-        st.cache_data.clear()
-
+        get_yahoo_news.clear()
         st.rerun()
 
     news = get_yahoo_news(
@@ -2289,14 +2347,13 @@ with tab_news:
     else:
 
         st.info(
-            "اوس مهال معتبر خبرونه ترلاسه نه شول. "
-            "کېدای شي Yahoo Finance معلومات نه وړاندې کوي."
+            "اوس مهال خبرونه ترلاسه نه شول."
         )
 
 
-# ============================================================
-# SYSTEM HEALTH TAB
-# ============================================================
+# =========================================================
+# SYSTEM HEALTH
+# =========================================================
 
 with tab_system:
 
@@ -2328,13 +2385,18 @@ with tab_system:
         "Backtesting: Enabled"
     )
 
+    telegram_status = (
+
+        "Configured"
+
+        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID
+
+        else "Not Configured"
+
+    )
+
     st.write(
-        "Telegram: "
-        + (
-            "Configured"
-            if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID
-            else "Not Configured"
-        )
+        f"Telegram: {telegram_status}"
     )
 
     st.write(
@@ -2343,6 +2405,10 @@ with tab_system:
 
     st.write(
         "Real-Money Execution: Disabled"
+    )
+
+    st.write(
+        "Automated Trading: Disabled"
     )
 
     st.divider()
